@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using Xamarin.Forms;
-using Debug = System.Diagnostics.Debug;
 
 namespace Plugin.SharedTransitions
 {
@@ -30,7 +29,7 @@ namespace Plugin.SharedTransitions
                            .FirstOrDefault() ?? new List<TransitionDetail>();
         }
 
-        public void AddOrUpdate(Page page, string transitionName, string transitionGroup, View view, object nativeView)
+        public void AddOrUpdate(Page page, string transitionName, string transitionGroup, bool isLightSnapshot, View view, object nativeView)
         {
             var transitionMap = _transitionStack.Value.FirstOrDefault(x => x.Page == page);
 
@@ -40,7 +39,7 @@ namespace Plugin.SharedTransitions
                     new TransitionMap
                     {
                         Page = page,
-                        Transitions = new List<TransitionDetail> {CreateTransition(transitionName, transitionGroup, view, nativeView)}
+                        Transitions = new List<TransitionDetail> {CreateTransition(transitionName, transitionGroup, isLightSnapshot, view, nativeView)}
                     }
                 );
             }
@@ -49,7 +48,7 @@ namespace Plugin.SharedTransitions
 	            var transitionDetail = transitionMap.Transitions.FirstOrDefault(x => x.View == view);
 	            if (transitionDetail == null)
 	            {
-		            transitionDetail = CreateTransition(transitionName, transitionGroup, view, nativeView);
+		            transitionDetail = CreateTransition(transitionName, transitionGroup, isLightSnapshot, view, nativeView);
 		            transitionMap.Transitions.Add(transitionDetail);
 
 		            ClearMapStackForElementRecycling(transitionMap, transitionDetail);
@@ -86,7 +85,7 @@ namespace Plugin.SharedTransitions
             _transitionStack.Value.Remove(_transitionStack.Value.FirstOrDefault(x => x.Page == page));
         }
 
-        public TransitionDetail CreateTransition(string transitionName,string transitionGroup, View view, object nativeView)
+        public TransitionDetail CreateTransition(string transitionName,string transitionGroup, bool isLightSnapshot, View view, object nativeView)
         {
             return new TransitionDetail
             {
@@ -94,6 +93,7 @@ namespace Plugin.SharedTransitions
 	            TransitionGroup = transitionGroup,
 	            View            = view,
 	            IsDirty         = false,
+	            IsLightSnapshot = isLightSnapshot,
 				NativeView      = new WeakReference(nativeView)
             };
         }

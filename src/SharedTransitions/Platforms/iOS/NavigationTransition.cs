@@ -30,7 +30,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
          */
 
         readonly ITransitionRenderer _navigationPage;
-        readonly List<(WeakReference ToView, WeakReference FromView)> _viewsToAnimate;
+        readonly List<(WeakReference ToView, WeakReference FromView, bool IsLightsnapshot)> _viewsToAnimate;
         readonly UINavigationControllerOperation _operation;
         readonly UIScreenEdgePanGestureRecognizer _edgeGestureRecognizer;
         readonly List<CAShapeLayer> _masksToAnimate;
@@ -39,7 +39,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
         UIViewController _toViewController;
         double _transitionDuration;
 
-        public NavigationTransition(List<(WeakReference ToView, WeakReference FromView)> viewsToAnimate, UINavigationControllerOperation operation, ITransitionRenderer navigationPage, UIScreenEdgePanGestureRecognizer edgeGestureRecognizer)
+        public NavigationTransition(List<(WeakReference ToView, WeakReference FromView, bool IsLightsnapshot)> viewsToAnimate, UINavigationControllerOperation operation, ITransitionRenderer navigationPage, UIScreenEdgePanGestureRecognizer edgeGestureRecognizer)
         {
             _navigationPage        = navigationPage;
             _operation             = operation;
@@ -61,6 +61,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
             _fromViewController = _transitionContext.GetViewControllerForKey(UITransitionContext.FromViewControllerKey);
             _toViewController   = _transitionContext.GetViewControllerForKey(UITransitionContext.ToViewControllerKey);
             _transitionDuration = TransitionDuration(transitionContext);
+            var onEndedCalled = false;
 
             var containerView   = _transitionContext.ContainerView;
 
@@ -69,87 +70,86 @@ namespace Plugin.SharedTransitions.Platforms.iOS
             if (_toViewController?.View == null)
                 return;
 
-            // Fox for pop + flip animation
-            var levelSubView = 1;
-            if (_operation == UINavigationControllerOperation.Pop &&
-                _navigationPage.BackgroundAnimation == BackgroundAnimation.Flip)
-                levelSubView = 0;
+            containerView.InsertSubview(_toViewController.View, 0);
 
-            containerView.InsertSubview(_toViewController.View, levelSubView);
-            _toViewController.View.Alpha = 0;
+            /*
+             * IMPORTANT
+             * During pop we need to Yield the task in order to have the coordinates
+             * for the destinations views before the transition begins
+             * Needed only on push, dont try this in pop or the custom edge gesture will not work!
+             */
+            if (_operation == UINavigationControllerOperation.Push)
+                await Task.Yield();
+
+            containerView.InsertSubview(_toViewController.View, 0);
+
+            // Fox for pop + flip animation
+            if (_navigationPage.BackgroundAnimation != BackgroundAnimation.Flip)
+                containerView.BringSubviewToFront(_toViewController.View);
 
             //iterate the destination views, this has two benefits:
             //1) We are sure to dont start transitions with views only in the start controller
             //2) With dynamic transitions (listview) we dont need to iterate al the tags we dont need
             foreach (var viewToAnimate in _viewsToAnimate)
             {
-
                 var toView   = (UIView)viewToAnimate.ToView.Target;
                 var fromView = (UIView)viewToAnimate.FromView.Target;
 
                 if (toView == null || fromView == null)
                 {
-                    Debug.WriteLine($"At this point we must have the 2 views to animate! One or both is missing");
+                    Debug.WriteLine("At this point we must have the 2 views to animate! One or both is missing");
                     break;
                 }
                 
                 UIView fromViewSnapshot;
                 CGRect fromViewFrame;
 
-                if (fromView is UIControl || fromView is UILabel )
+                if (viewToAnimate.IsLightsnapshot)
                 {
-                    //For buttons and labels just copy the view to preserve a good transition
-                    //Using normal snapshot with labels and buttons may cause streched and deformed images
-                    fromViewFrame    = fromView.Frame;
-                    fromViewSnapshot = fromView.CopyView();
-                }
-                else if (fromView is UIImageView fromImageView)
-                {
-                    if (fromImageView.ContentMode == UIViewContentMode.ScaleAspectFit)
-                    {
-                        //Take a simple snapshot, saving resources, only of the visible frame, 
-                        fromViewFrame    = fromImageView.GetImageFrame();
-                        fromViewSnapshot = fromView.ResizableSnapshotView(fromViewFrame, false, UIEdgeInsets.Zero);
-                    }
-                    else
-                    {
-                        //The only way to do good transitions with *Fit aspect is just to copy the view and animate the frame/image
-                        fromViewFrame    = fromView.Frame;
-                        fromViewSnapshot = fromView.CopyView();
-                    }
+                    fromViewFrame = fromView.Frame;
+                    fromViewSnapshot = fromView.SnapshotView(false);
                 }
                 else
                 {
-                    /*
-                     * IMPORTANT
-                     *
-                     * DAMNIT! this little things made me lost a LOT of time. Me n00b.
-                     * So.. dont use fromView.Frame here or layout will go crazy!
-                     */
-                    fromViewFrame    = fromView.Bounds;
-                    fromViewSnapshot = fromView.CopyView(softCopy: true);
+                    if (fromView is UIControl || fromView is UILabel )
+                    {
+                        //For buttons and labels just copy the view to preserve a good transition
+                        //Using normal snapshot with labels and buttons may cause streched and deformed images
+                        fromViewFrame    = fromView.Frame;
+                        fromViewSnapshot = fromView.CopyView();
+                    }
+                    else if (fromView is UIImageView fromImageView)
+                    {
+                        if (fromImageView.ContentMode == UIViewContentMode.ScaleAspectFit)
+                        {
+                            //Take a simple snapshot, saving resources, only of the visible frame,
+                            fromViewFrame    = fromImageView.GetImageFrame();
+                            fromViewSnapshot = fromView.ResizableSnapshotView(fromViewFrame, false, UIEdgeInsets.Zero);
+                        }
+                        else
+                        {
+                            //The only way to do good transitions with *Fit aspect is just to copy the view and animate the frame/image
+                            fromViewFrame    = fromView.Frame;
+                            fromViewSnapshot = fromView.CopyView();
+                        }
+                    }
+                    else
+                    {
+                        /*
+                         * IMPORTANT
+                         * DAMNIT! this little things made me lost a LOT of time. Me n00b.
+                         * So.. dont use fromView.Frame here or layout will go crazy!
+                         */
+                        fromViewFrame    = fromView.Bounds;
+                        fromViewSnapshot = fromView.CopyView(softCopy: true);
+                    }
                 }
 
                 containerView.AddSubview(fromViewSnapshot);
                 fromViewSnapshot.Frame = fromView.ConvertRectToView(fromViewFrame, containerView);
 
-                /*
-                 * IMPORTANT
-                 * We need to Yield the task in order to exclude the following changes
-                 * before the transition starts. Needed only on push, dont try this in pop
-                 * or the custom edge gesture will not work!
-                 */
-
-                if (_operation == UINavigationControllerOperation.Push)
-                {
-                    //without this flickering could occour
-                    fromViewSnapshot.Hidden = true;
-                    await Task.Yield();
-                }
-
-                fromViewSnapshot.Hidden = false;
-                toView.Hidden           = true;
-                fromView.Hidden         = true;
+                toView.Hidden   = true;
+                fromView.Hidden = true;
 
                 var toFrame = toView is UIImageView toImageView
                                   ? toImageView.ConvertRectToView(toImageView.GetImageFrame(), containerView)
@@ -188,6 +188,23 @@ namespace Plugin.SharedTransitions.Platforms.iOS
                 {
                     toView.Hidden   = false;
 
+                    //This is the only realiable place where to call SharedTransitionEnded event
+                    //when the backgroundAnimation is set to NONE
+                    if (!onEndedCalled)
+                    {
+                        onEndedCalled = true;
+                        if (_transitionContext.TransitionWasCancelled)
+                        {
+                            Debug.WriteLine($"{DateTime.Now} - SHARED: Transition cancelled");
+                            _navigationPage.SharedTransitionCancelled();
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"{DateTime.Now} - SHARED: Transition ended");
+                            _navigationPage.SharedTransitionEnded();
+                        }
+                    }
+
                     //Fix for boxview inside shell
                     //tldr: it get immediatly disposed after the animation!
                     try
@@ -205,7 +222,10 @@ namespace Plugin.SharedTransitions.Platforms.iOS
             }
 
             if (_masksToAnimate.Any())
-                _navigationPage.EdgeGesturePanned += NavigationPageOnEdgeGesturePanned;
+                _navigationPage.OnEdgeGesturePanned += NavigationPageOnEdgeGesturePanned;
+
+            Debug.WriteLine($"{DateTime.Now} - SHARED: Transition started");
+            _navigationPage.SharedTransitionStarted();
 
             AnimateBackground();
         }
@@ -213,7 +233,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
         /// <summary>
         /// Handle the main EdgePanGesture on the NavigationPage used to swipe back
         /// </summary>
-        private void NavigationPageOnEdgeGesturePanned(object sender, EdgeGesturePannedArgs args)
+        void NavigationPageOnEdgeGesturePanned(object sender, EdgeGesturePannedArgs args)
         {
             //Control the animation on the upper mask layer
             double offset = _transitionDuration * args.Percent;
@@ -237,7 +257,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
                 args.State == UIGestureRecognizerState.Cancelled ||
                 args.State == UIGestureRecognizerState.Failed)
             {
-                _navigationPage.EdgeGesturePanned -= NavigationPageOnEdgeGesturePanned;
+                _navigationPage.OnEdgeGesturePanned -= NavigationPageOnEdgeGesturePanned;
             }
         }
 
@@ -284,32 +304,21 @@ namespace Plugin.SharedTransitions.Platforms.iOS
 
             switch (backgroundAnimation)
             {
+                //This is needed so the AnimationEnded override will be called
                 case BackgroundAnimation.None:
-
-                    //Needed to avoid occasional flickering!
-                    var delay = _operation == UINavigationControllerOperation.Push
-                        ? _transitionDuration
-                        : 0;
-                    UIView.Animate(0, delay, UIViewAnimationOptions.TransitionNone, () =>
-                    {
-                        _toViewController.View.Alpha = 1;
-                        //_fromViewController.View.Alpha = 0;
-                    }, FixCompletionForSwipeAndPopToRoot);
+                    FixCompletionForSwipeAndPopToRoot();
                     break;
 
                 case BackgroundAnimation.Fade:
-                    //Fix for shell
                     _toViewController.View.Alpha = 0;
                     UIView.Animate(_transitionDuration, 0, UIViewAnimationOptions.CurveLinear, () =>
                     {
                         _toViewController.View.Alpha = 1;
-                        //_fromViewController.View.Alpha = 0;
                     }, FixCompletionForSwipeAndPopToRoot);
                     break;
 
                 case BackgroundAnimation.Flip:
 
-                    _toViewController.View.Alpha = 1;
                     _fromViewController.View.Alpha = 0;
 
                     UIView.Transition(_fromViewController.View, _transitionDuration, UIViewAnimationOptions.TransitionFlipFromRight, null, null);
@@ -317,7 +326,6 @@ namespace Plugin.SharedTransitions.Platforms.iOS
                     break;
 
                 case BackgroundAnimation.SlideFromBottom:
-                    _toViewController.View.Alpha = 1;
                     _toViewController.View.Center = new CGPoint(_toViewController.View.Center.X, _toViewController.View.Center.Y + screenWidth);
                     UIView.Animate(_transitionDuration, 0, UIViewAnimationOptions.CurveEaseOut, () =>
                     {
@@ -327,7 +335,6 @@ namespace Plugin.SharedTransitions.Platforms.iOS
                     break;
 
                 case BackgroundAnimation.SlideFromLeft:
-                    _toViewController.View.Alpha = 1;
                     _toViewController.View.Center = new CGPoint(_toViewController.View.Center.X - screenWidth, _toViewController.View.Center.Y);
                     UIView.Animate(_transitionDuration, 0, UIViewAnimationOptions.CurveEaseOut, () =>
                     {
@@ -337,7 +344,6 @@ namespace Plugin.SharedTransitions.Platforms.iOS
                     break;
 
                 case BackgroundAnimation.SlideFromRight:
-                    _toViewController.View.Alpha = 1;
                     _toViewController.View.Center = new CGPoint(_toViewController.View.Center.X + screenWidth, _toViewController.View.Center.Y);
                     UIView.Animate(_transitionDuration, 0, UIViewAnimationOptions.CurveEaseOut, () =>
                     {
@@ -347,7 +353,6 @@ namespace Plugin.SharedTransitions.Platforms.iOS
                     break;
 
                 case BackgroundAnimation.SlideFromTop:
-                    _toViewController.View.Alpha = 1;
                     _toViewController.View.Center = new CGPoint(_toViewController.View.Center.X, _toViewController.View.Center.Y - screenWidth);
                     UIView.Animate(_transitionDuration, 0, UIViewAnimationOptions.CurveEaseOut, () =>
                     {

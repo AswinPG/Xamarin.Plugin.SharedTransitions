@@ -1,4 +1,6 @@
-﻿using Xamarin.Forms;
+﻿using System;
+using System.ComponentModel;
+using Xamarin.Forms;
 
 namespace Plugin.SharedTransitions
 {
@@ -34,6 +36,10 @@ namespace Plugin.SharedTransitions
         public static readonly BindableProperty TransitionDurationProperty =
             BindableProperty.CreateAttached("TransitionDuration", typeof(long), typeof(SharedTransitionNavigationPage), (long)300);
 
+        public event EventHandler<SharedTransitionEventArgs> TransitionStarted;
+        public event EventHandler<SharedTransitionEventArgs> TransitionEnded;
+        public event EventHandler<SharedTransitionEventArgs> TransitionCancelled;
+
         /// <summary>
         /// Gets the transition map
         /// </summary>
@@ -45,6 +51,7 @@ namespace Plugin.SharedTransitions
 	        get => (ITransitionMapper)GetValue(TransitionMapProperty);
 	        set => SetValue(TransitionMapPropertyKey, value);
         }
+
         ITransitionMapper ISharedTransitionContainer.TransitionMap
         {
 	        get => TransitionMap;
@@ -103,9 +110,72 @@ namespace Plugin.SharedTransitions
             page.SetValue(TransitionDurationProperty, value);
         }
 
+        public virtual void OnTransitionStarted(SharedTransitionEventArgs args){ }
+        public virtual void OnTransitionEnded(SharedTransitionEventArgs args){ }
+        public virtual void OnTransitionCancelled(SharedTransitionEventArgs args){ }
+
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SendTransitionStarted(SharedTransitionEventArgs args)
+        {
+            TransitionStarted?.Invoke(this, args);
+            OnTransitionStarted(args);
+            MessagingCenter.Send(this, "SendTransitionStarted", args);
+        }
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SendTransitionEnded(SharedTransitionEventArgs args)
+        {
+            TransitionEnded?.Invoke(this, args);
+            OnTransitionEnded(args);
+            MessagingCenter.Send(this, "SendTransitionEnded", args);
+        }
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public void SendTransitionCancelled(SharedTransitionEventArgs args)
+        {
+            TransitionCancelled?.Invoke(this, args);
+            OnTransitionCancelled(args);
+            MessagingCenter.Send(this, "SendTransitionCancelled", args);
+        }
+
+        protected override void OnChildAdded(Element child)
+        {
+            if (child is ITransitionAware aware)
+            {
+                var page = (Page) child;
+                MessagingCenter.Subscribe<SharedTransitionNavigationPage, SharedTransitionEventArgs> (child, "SendTransitionStarted", (sender, args) =>
+                {
+                    if (page == args.PageFrom || page == args.PageTo)
+                        aware.OnTransitionStarted(args);
+                });
+
+                MessagingCenter.Subscribe<SharedTransitionNavigationPage, SharedTransitionEventArgs> (child, "SendTransitionEnded", (sender, args) =>
+                {
+                    if (page == args.PageFrom || page == args.PageTo)
+                        aware.OnTransitionEnded(args);
+                });
+
+                MessagingCenter.Subscribe<SharedTransitionNavigationPage, SharedTransitionEventArgs> (child, "SendTransitionCancelled", (sender, args) =>
+                {
+                    if (page == args.PageFrom || page == args.PageTo)
+                        aware.OnTransitionCancelled(args);
+                });
+            }
+
+            base.OnChildAdded(child);
+        }
+
         protected override void OnChildRemoved(Element child)
         {
             TransitionMap.RemoveFromPage((Page)child);
+
+            if (child is ITransitionAware)
+            {
+                MessagingCenter.Unsubscribe<SharedTransitionNavigationPage, SharedTransitionEventArgs>(child, "SendTransitionStarted");
+                MessagingCenter.Unsubscribe<SharedTransitionNavigationPage, SharedTransitionEventArgs>(child, "SendTransitionEnded");
+                MessagingCenter.Unsubscribe<SharedTransitionNavigationPage, SharedTransitionEventArgs>(child, "SendTransitionCancelled");
+            }
         }
     }
 }

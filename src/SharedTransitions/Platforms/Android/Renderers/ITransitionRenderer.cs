@@ -3,6 +3,7 @@ using AndroidX.Fragment.App;
 #else
 using Android.Support.V4.App;
 #endif
+using System;
 using Xamarin.Forms;
 
 namespace Plugin.SharedTransitions.Platforms.Android
@@ -17,5 +18,8 @@ namespace Plugin.SharedTransitions.Platforms.Android
 		Page LastPageInStack { get; set; }
 		ITransitionMapper TransitionMap { get; set; }
 		global::Android.Transitions.Transition InflateTransitionInContext();
+		void SharedTransitionStarted();
+		void SharedTransitionEnded();
+		void SharedTransitionCancelled();
 	}
 }

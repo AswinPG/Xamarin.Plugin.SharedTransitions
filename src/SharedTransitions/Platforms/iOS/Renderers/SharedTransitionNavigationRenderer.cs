@@ -27,7 +27,6 @@ namespace Plugin.SharedTransitions.Platforms.iOS
     [Preserve(AllMembers = true)]
     public class SharedTransitionNavigationRenderer : NavigationRenderer, ITransitionRenderer
     {
-	    public event EventHandler<EdgeGesturePannedArgs> EdgeGesturePanned;
         public double TransitionDuration  { get; set; }
         public BackgroundAnimation BackgroundAnimation { get; set; }
 
@@ -63,9 +62,11 @@ namespace Plugin.SharedTransitions.Platforms.iOS
         public UIScreenEdgePanGestureRecognizer EdgeGestureRecognizer { get; set; }
         public UIPercentDrivenInteractiveTransition PercentDrivenInteractiveTransition { get; set; }
         public bool DisableTransition { get; set; }
+        public event EventHandler<EdgeGesturePannedArgs> OnEdgeGesturePanned;
         public string SelectedGroup { get; set; }
 
-        private readonly InteractiveTransitionRecognizer _interactiveTransitionRecognizer;
+        readonly InteractiveTransitionRecognizer _interactiveTransitionRecognizer;
+        bool _isPush;
 
         public SharedTransitionNavigationRenderer()
         {
@@ -76,6 +77,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
         //During PopToRoot we skip everything and make the default animation
         protected override async Task<bool> OnPopToRoot(Page page, bool animated)
         {
+            _isPush = false;
             DisableTransition = true;
             var result = await base.OnPopToRoot(page, true);
             DisableTransition = false;
@@ -85,7 +87,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
 
         protected override async Task<bool> OnPushAsync(Page page, bool animated)
         {
-	        LastPageInStack = page;
+            LastPageInStack = page;
 	        UpdatePropertyContainer();
 
 	        return await base.OnPushAsync(page, animated);
@@ -93,6 +95,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
 
         public override UIViewController PopViewController(bool animated)
         {
+            _isPush = false;
 	        LastPageInStack = Element.Navigation.NavigationStack.Last();
 	        UpdatePropertyContainer();
 
@@ -110,6 +113,7 @@ namespace Plugin.SharedTransitions.Platforms.iOS
              * After a lot of test it seems that with Task.Yield we have basicaly the same performance as without
              * This add no more than 5ms to the navigation i think is largely acceptable
              */
+            _isPush = true;
             if (PropertiesContainer != null)
             {
 	            var mapStack = TransitionMap?.GetMap(PropertiesContainer, null, true);
@@ -143,13 +147,6 @@ namespace Plugin.SharedTransitions.Platforms.iOS
         {
 	        _interactiveTransitionRecognizer.RemoveInteractiveTransitionRecognizer();
         }
-
-        public void OnEdgeGesturePanned(EdgeGesturePannedArgs e)
-        {
-	        EventHandler<EdgeGesturePannedArgs> handler = EdgeGesturePanned;
-	        handler?.Invoke(this, e);
-        }
-
         void HandleChildPropertyChanged(object sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == SharedTransitionNavigationPage.BackgroundAnimationProperty.PropertyName)
@@ -191,6 +188,47 @@ namespace Plugin.SharedTransitions.Platforms.iOS
         void UpdateSelectedGroup()
         {
             SelectedGroup = SharedTransitionNavigationPage.GetTransitionSelectedGroup(PropertiesContainer);
+        }
+
+        public void EdgeGesturePanned(EdgeGesturePannedArgs e)
+        {
+            EventHandler<EdgeGesturePannedArgs> handler = OnEdgeGesturePanned;
+            handler?.Invoke(this, e);
+        }
+
+        public void SharedTransitionStarted()
+        {
+            ((ISharedTransitionContainer) Element).SendTransitionStarted(TransitionArgs());
+        }
+
+        public void SharedTransitionEnded()
+        {
+            ((ISharedTransitionContainer) Element).SendTransitionEnded(TransitionArgs());
+        }
+
+        public void SharedTransitionCancelled()
+        {
+            ((ISharedTransitionContainer) Element).SendTransitionCancelled(TransitionArgs());
+        }
+
+        SharedTransitionEventArgs TransitionArgs()
+        {
+            if (_isPush)
+            {
+                return new SharedTransitionEventArgs
+                {
+                    PageFrom     = PropertiesContainer,
+                    PageTo       = LastPageInStack,
+                    NavOperation = NavOperation.Push
+                };
+            }
+
+            return new SharedTransitionEventArgs
+            {
+                PageFrom     = LastPageInStack,
+                PageTo       = PropertiesContainer,
+                NavOperation = NavOperation.Pop
+            };
         }
     }
 }
